@@ -24,7 +24,7 @@ TIMEFRAME = '1m'
 RSI_LENGTH = 14         
 RSI_ENTRY_LEVEL = 70    # Signal SHORT : Vente si RSI > 70 (Surachat)
 MAX_SYMBOLS_TO_SCAN = 20 # Nombre de symboles scannés par cycle
-TIME_TO_WAIT_SECONDS = 10 # 🟢 Fréquence du cycle : 10 secondes
+TIME_TO_WAIT_SECONDS = 5 # 🟢 Fréquence du cycle : 5 secondes
 # Pas de limite MAX_OPEN_TRADES
 
 # --- Paramètres de Simulation ---
@@ -297,5 +297,6 @@ def run_bot():
 
 # Décommentez la ligne ci-dessous pour lancer le bot !
 run_bot()
+
 
 
