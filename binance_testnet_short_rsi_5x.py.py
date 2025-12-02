@@ -16,22 +16,21 @@ SECRET = ''
 
 # --- Configuration Telegram (OBLIGATOIRE) ---
 TELEGRAM_BOT_TOKEN = '7751726920:AAEMIJqpRw91POu_RDUTN8SOJvMvWSxcuz4' 
-# 🛑 IMPORTANT : METTRE ICI VOTRE CHAT ID NUMÉRIQUE CORRECT
 TELEGRAM_CHAT_ID = '5104739573' 
 
 # --- Paramètres de la Stratégie (SHORT) ---
 TIMEFRAME = '1m'          
 RSI_LENGTH = 14           
-RSI_ENTRY_LEVEL = 65      # Signal SHORT : Vente si RSI > 65 (Surachat)
-MAX_SYMBOLS_TO_SCAN = 10  # 🚀 MODIFIÉ : Réduit à 10 symboles pour la vitesse
-TIME_TO_WAIT_SECONDS = 2  # 🚀 MODIFIÉ : Fréquence du cycle : 2 secondes (Recherche rapide)
+RSI_ENTRY_LEVEL = 65      
+MAX_SYMBOLS_TO_SCAN = 10  
+TIME_TO_WAIT_SECONDS = 2  
 
 # --- Paramètres de Simulation ---
-TRADE_AMOUNT_USDC = 1.0   # Capital simulé par trade (en USDC)
-LEVERAGE = 5              # Levier simulé
-TAKE_PROFIT_PCT = 0.005   # 0.5% de Take Profit
-STOP_LOSS_PCT = 0.50      # 50% de Stop Loss
-REPORT_FREQUENCY = 20     # Fréquence des rapports
+COLLATERAL_AMOUNT_USDC = 1.0   
+LEVERAGE = 5              
+TAKE_PROFIT_PCT = 0.005   
+STOP_LOSS_PCT = 0.50      
+REPORT_FREQUENCY = 20     
 
 # --- Capital de Départ Virtuel ---
 INITIAL_BALANCE_USDC = 100.0 
@@ -49,7 +48,7 @@ TRANSACTION_COUNT = 0
 WIN_COUNT = 0                     
 LOSS_COUNT = 0                    
 open_positions = {}               
-SIM_BALANCE_USDC = INITIAL_BALANCE_USDC 
+SIM_BALANCE_USDC = INITIAL_BALANCE_USDC # Solde disponible + P&L trades fermés
 
 # =====================================================================
 # ÉTAPE 2 : FONCTIONS DE SUPPORT
@@ -68,8 +67,7 @@ def send_telegram_message(message):
     payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'Markdown'}
     
     try:
-        response = requests.post(url, data=payload, timeout=5)
-        response.raise_for_status() 
+        requests.post(url, data=payload, timeout=5).raise_for_status() 
         
     except requests.exceptions.RequestException as e:
         print(f"❌ ÉCHEC TELEGRAM : {e}")
@@ -77,7 +75,7 @@ def send_telegram_message(message):
 
 def get_usdc_symbols():
     """ 
-    Récupère toutes les paires XXX/USDC disponibles sur l'API publique.
+    Récupère toutes les paires XXX/USDC disponibles.
     """
     try:
         temp_exchange = ccxt.binance({
@@ -107,27 +105,22 @@ def fetch_ohlcv(symbol, timeframe, limit):
         return pd.DataFrame()
 
 def check_trade_signal(df):
-    """ 
-    Vérifie la condition de signal SHORT (RSI > 65) 
-    et retourne True, Prix, et la valeur RSI.
-    """
+    """ Vérifie la condition de signal SHORT (RSI > RSI_ENTRY_LEVEL). """
     if df.empty or len(df) < RSI_LENGTH:
-        return False, None, None # Ajout du RSI dans le retour
+        return False, None, None
         
-    # Calcul des indicateurs
     df['RSI_14'] = ta.rsi(df['Close'], length=RSI_LENGTH)
     df.dropna(subset=['RSI_14'], inplace=True) 
     
     if df.empty:
-        return False, None, None # Ajout du RSI dans le retour
+        return False, None, None
         
     last = df.iloc[-1]
     
-    # LOGIQUE SHORT : Vente si RSI > 65 (Surachat)
     if last['RSI_14'] > RSI_ENTRY_LEVEL: 
-        return True, last['Close'], last['RSI_14'] # Retourne le RSI
+        return True, last['Close'], last['RSI_14']
         
-    return False, None, None # Ajout du RSI dans le retour
+    return False, None, None
 
 # =====================================================================
 # ÉTAPE 3 : FONCTIONS DE PAPER TRADING (SIMULÉES)
@@ -135,30 +128,30 @@ def check_trade_signal(df):
 
 def execute_simulated_trade(symbol, entry_price, rsi_value):
     """ 
-    Simule l'ouverture d'une position SHORT (Ordre de Marché).
+    Simule l'ouverture d'une position SHORT.
     """
     global open_positions, SIM_BALANCE_USDC
     
-    if SIM_BALANCE_USDC < TRADE_AMOUNT_USDC:
-        print(f"❌ Impossible d'ouvrir SHORT sur {symbol}. Solde simulé insuffisant: {SIM_BALANCE_USDC:.2f} USDC.")
+    if SIM_BALANCE_USDC < COLLATERAL_AMOUNT_USDC:
+        print(f"❌ Solde simulé insuffisant: {SIM_BALANCE_USDC:.2f} USDC.")
         return False
         
-    amount_in_base_asset = (TRADE_AMOUNT_USDC * LEVERAGE) / entry_price
+    amount_in_base_asset = (COLLATERAL_AMOUNT_USDC * LEVERAGE) / entry_price
     
-    SIM_BALANCE_USDC -= TRADE_AMOUNT_USDC
+    # 1. Déduction du collatéral du solde disponible
+    SIM_BALANCE_USDC -= COLLATERAL_AMOUNT_USDC 
     
     open_positions[symbol] = {
         'entry_price': entry_price,
-        'amount': amount_in_base_asset,
+        'borrowed_amount': amount_in_base_asset,
         'entry_time': time.time(),
-        'rsi_at_entry': rsi_value, # Stocke le RSI
-        # Calcul inverse pour SHORT :
+        'rsi_at_entry': rsi_value, 
         'tp_price': entry_price * (1 - TAKE_PROFIT_PCT), 
         'sl_price': entry_price * (1 + STOP_LOSS_PCT)  
     }
     
     print("-" * 50)
-    print(f"📝 SHORT OUVERT (SIMULÉ, Ordre de Marché) sur {symbol} | Entrée: {entry_price:.4f} | RSI: {rsi_value:.2f}") 
+    print(f"📝 SHORT OUVERT (SIMULÉ, Margin 5x) sur {symbol} | Entrée: {entry_price:.4f} | RSI: {rsi_value:.2f}") 
     return True
 
 def simulate_close_trade(symbol, current_price):
@@ -175,34 +168,32 @@ def simulate_close_trade(symbol, current_price):
     result = None
     close_price = current_price
     
-    # 1. Vérification TP/SL (LOGIQUE SHORT)
+    # Sortie Stricte : UNIQUEMENT TP ou SL
     if current_price <= trade['tp_price']:
-        # 🟢 GAIN : Le prix a baissé jusqu'au TP 🟢
         result = "GAIN (TP)"
         WIN_COUNT += 1
         close_price = trade['tp_price'] 
         
     elif current_price >= trade['sl_price']:
-        # 🔴 PERTE : Le prix a monté jusqu'au SL 🔴
         result = "PERTE (SL)"
         LOSS_COUNT += 1
         close_price = trade['sl_price']
 
     else:
-        return False # Pas de clôture, le script continue
+        return False 
 
-    # 2. Calcul du P&L simulé 
+    # Calcul du P&L simulé 
     percentage_change = (trade['entry_price'] - close_price) / trade['entry_price'] 
-    pnl_usd = percentage_change * (TRADE_AMOUNT_USDC * LEVERAGE)
+    pnl_usd = percentage_change * (COLLATERAL_AMOUNT_USDC * LEVERAGE)
     
-    # 3. Mise à jour du solde virtuel (Capital initial + P&L)
-    SIM_BALANCE_USDC += TRADE_AMOUNT_USDC + pnl_usd
+    # 1. Restauration du collatéral et ajout/déduction du P&L
+    SIM_BALANCE_USDC += COLLATERAL_AMOUNT_USDC + pnl_usd
     
-    # 4. Mise à jour des statistiques et suppression de la position
+    # Mise à jour des statistiques et suppression de la position
     TRANSACTION_COUNT += 1
     del open_positions[symbol] 
     
-    # 🔔 ENVOI DU MESSAGE À LA CLÔTURE (TP ou SL validé) 🔔
+    # 🔔 ENVOI DU MESSAGE À LA CLÔTURE
     print(f"--- 🔔 {symbol} FERMÉ: {result} ---")
     send_telegram_message(
         f"🚨 **CLÔTURE SHORT (SIMULÉE) - {result}**\n"
@@ -210,9 +201,9 @@ def simulate_close_trade(symbol, current_price):
         f"Asset: **{symbol}**\n"
         f"P&L du Trade: **{pnl_usd:.4f} USDC**\n"
         f"Prix d'Entrée: {trade['entry_price']:.4f}\n"
-        f"Prix de Clôture (Simulé): {close_price:.4f}\n"
+        f"Prix de Clôture: {close_price:.4f}\n"
         f"==================================\n"
-        f"💰 **NOUVEAU SOLDE VIRTUEL TOTAL: {SIM_BALANCE_USDC:.2f} USDC**"
+        f"💰 **SOLDE DISPONIBLE ACTUEL: {SIM_BALANCE_USDC:.2f} USDC**"
     )
     
     if TRANSACTION_COUNT % REPORT_FREQUENCY == 0:
@@ -221,21 +212,66 @@ def simulate_close_trade(symbol, current_price):
     return True
 
 # =====================================================================
-# ÉTAPE 4 : FONCTIONS DE RAPPORT
+# ÉTAPE 4 : FONCTIONS DE RAPPORT D'ÉQUITÉ ET DE P&L
 # =====================================================================
 
+def get_unrealized_pnl_and_collateral():
+    """ 
+    Calcule le P&L non réalisé et le collatéral total engagé pour toutes les positions ouvertes.
+    """
+    total_unrealized_pnl = 0.0
+    total_collateral_engaged = 0.0
+    
+    if not open_positions:
+        return 0.0, 0.0
+
+    # Récupérer les prix actuels de toutes les cryptos en position
+    symbols_to_fetch = list(open_positions.keys())
+    
+    # Utiliser un seul appel pour obtenir les tickers des symboles ouverts
+    try:
+        tickers = exchange.fetch_tickers(symbols_to_fetch)
+    except Exception as e:
+        print(f"❌ Erreur lors du fetch des tickers pour le P&L non réalisé: {e}")
+        return 0.0, 0.0
+
+    for symbol, trade in open_positions.items():
+        if symbol in tickers:
+            current_price = tickers[symbol]['last']
+            
+            # Calcul du P&L non réalisé pour un SHORT
+            # P&L = (Prix Entrée - Prix Actuel) / Prix Entrée * Taille Position USD
+            
+            percentage_change = (trade['entry_price'] - current_price) / trade['entry_price']
+            pnl_usd = percentage_change * (COLLATERAL_AMOUNT_USDC * LEVERAGE)
+            
+            total_unrealized_pnl += pnl_usd
+            total_collateral_engaged += COLLATERAL_AMOUNT_USDC # Ajouter le collatéral de ce trade
+
+    return total_unrealized_pnl, total_collateral_engaged
+
+
 def generate_report():
-    """ Génère et envoie le rapport de performance sur Telegram. """
+    """ Génère et envoie le rapport de performance sur Telegram (avec Équité Totale). """
     global TRANSACTION_COUNT, WIN_COUNT, LOSS_COUNT, INITIAL_BALANCE_USDC, SIM_BALANCE_USDC
 
+    # 1. Calcul des composantes de l'Équité
+    unrealized_pnl, collateral_engaged = get_unrealized_pnl_and_collateral()
+    
+    # Équité Totale = Solde Disponible (Trades Fermés) + Collatéral Engagé + P&L Non Réalisé
+    total_equity = SIM_BALANCE_USDC + collateral_engaged + unrealized_pnl
+    
     win_rate = (WIN_COUNT / TRANSACTION_COUNT) * 100 if TRANSACTION_COUNT > 0 else 0
-    pnl_total = SIM_BALANCE_USDC - INITIAL_BALANCE_USDC
+    pnl_total_closed = SIM_BALANCE_USDC - INITIAL_BALANCE_USDC
     
     report_message = (
         f"📊 **RAPPORT DE PERFORMANCE (PAPER TRADING)**\n"
         f"--- {time.strftime('%Y-%m-%d %H:%M')} ---\n"
-        f"➡️ **Solde Virtuel Actuel : {SIM_BALANCE_USDC:.2f} USDC**\n"
-        f"💰 P&L Total : {pnl_total:.2f} USDC\n"
+        f"💵 **ÉQUITÉ TOTALE ACTUELLE : {total_equity:.2f} USDC**\n" # Nouveau Solde
+        f"-----------------------------------------\n"
+        f"💰 Solde Disponible (P&L Fermé) : {SIM_BALANCE_USDC:.2f} USDC\n"
+        f"💼 Collatéral Engagé : {collateral_engaged:.2f} USDC\n"
+        f"📉 P&L Flottant (Non Réalisé) : {unrealized_pnl:.2f} USDC\n"
         f"-----------------------------------------\n"
         f"📝 **Statistiques (Total Trades : {TRANSACTION_COUNT})**\n"
         f"✅ Trades Gagnants (TP) : {WIN_COUNT}\n"
@@ -245,13 +281,13 @@ def generate_report():
     send_telegram_message(report_message)
 
 # =====================================================================
-# ÉTAPE 5 : LA BOUCLE PRINCIPALE 24/7 (AVEC GESTION D'ERREURS)
+# ÉTAPE 5 : LA BOUCLE PRINCIPALE 24/7 (AVEC AFFICHAGE EN TEMPS RÉEL)
 # =====================================================================
 
 def run_bot():
     """ Boucle principale qui exécute l'analyse et la simulation sur toutes les cryptos. """
     
-    print(f"🤖 Bot SHORT MULTI-CRYPTO PAPER TRADING démarré (RSI > {RSI_ENTRY_LEVEL}, 1m, SCAN/{TIME_TO_WAIT_SECONDS}S).")
+    print(f"🤖 Bot SHORT MULTI-CRYPTO PAPER TRADING démarré (RSI > {RSI_ENTRY_LEVEL}, TP={TAKE_PROFIT_PCT*100}%, Marge={COLLATERAL_AMOUNT_USDC:.1f} USDC).")
     print(f"🔔 MODE SIMULATION. Solde virtuel de départ: {INITIAL_BALANCE_USDC:.2f} USDC")
     
     while True:
@@ -264,7 +300,8 @@ def run_bot():
             
             for symbol in usdc_symbols:
                 
-                data = fetch_ohlcv(symbol, TIMEFRAME, limit=RSI_LENGTH + 5)
+                # Récupérer les données minimales nécessaires (15 bougies)
+                data = fetch_ohlcv(symbol, TIMEFRAME, limit=RSI_LENGTH + 1)
                 
                 if data.empty:
                     continue
@@ -275,17 +312,21 @@ def run_bot():
                 if symbol in open_positions:
                     simulate_close_trade(symbol, current_price) 
                 
-                # B. RECHERCHE DE NOUVEAUX SIGNAUX (SANS limite)
+                # B. RECHERCHE DE NOUVEAUX SIGNAUX
                 elif symbol not in open_positions: 
-                    # 💡 Changement : Récupère maintenant 3 valeurs (signal, prix, rsi)
                     signal_detected, entry_price, rsi_value = check_trade_signal(data) 
                     
                     if signal_detected:
-                        # 💡 Changement : Passe la valeur RSI à la fonction d'exécution
                         execute_simulated_trade(symbol, entry_price, rsi_value) 
 
-
-            # 4. Temps d'attente fixe (2 secondes)
+            # NOUVEAU : Calcul et affichage de l'équité totale en temps réel
+            unrealized_pnl, collateral_engaged = get_unrealized_pnl_and_collateral()
+            total_equity = SIM_BALANCE_USDC + collateral_engaged + unrealized_pnl
+            
+            print(f"💰 SOLDE DISPONIBLE (Trades Fermés): {SIM_BALANCE_USDC:.2f} USDC")
+            print(f"💵 **ÉQUITÉ TOTALE ACTUELLE (avec P&L flottant): {total_equity:.2f} USDC**")
+            
+            # 4. Temps d'attente
             print(f"Fin du cycle. Prochain scan dans {TIME_TO_WAIT_SECONDS} seconde(s).")
             time.sleep(TIME_TO_WAIT_SECONDS) 
 
