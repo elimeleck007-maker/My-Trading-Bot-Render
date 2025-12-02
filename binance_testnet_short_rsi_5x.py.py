@@ -12,32 +12,31 @@ import datetime
 
 # --- Clés API (Uniquement pour Telegram) ---
 API_KEY = '' 
-SECRET = ''  
+SECRET = '' 
 
 # --- Configuration Telegram (OBLIGATOIRE) ---
 TELEGRAM_BOT_TOKEN = '7751726920:AAEMIJqpRw91POu_RDUTN8SOJvMvWSxcuz4' 
-# 🛑 IMPORTANT : METTRE ICI VOTRE CHAT ID NUMÉRIQUE CORRECT (ex: -1234567890)
+# 🛑 IMPORTANT : METTRE ICI VOTRE CHAT ID NUMÉRIQUE CORRECT
 TELEGRAM_CHAT_ID = '5104739573' 
 
 # --- Paramètres de la Stratégie (SHORT) ---
-TIMEFRAME = '1m'        
-RSI_LENGTH = 14         
-RSI_ENTRY_LEVEL = 65    # Signal SHORT : Vente si RSI > 70 (Surachat)
-MAX_SYMBOLS_TO_SCAN = 20 # Nombre de symboles scannés par cycle
-TIME_TO_WAIT_SECONDS = 7 # 🟢 Fréquence du cycle : 7 secondes
-# Pas de limite MAX_OPEN_TRADES
+TIMEFRAME = '1m'          
+RSI_LENGTH = 14           
+RSI_ENTRY_LEVEL = 65      # Signal SHORT : Vente si RSI > 65 (Surachat)
+MAX_SYMBOLS_TO_SCAN = 10  # 🚀 MODIFIÉ : Réduit à 10 symboles pour la vitesse
+TIME_TO_WAIT_SECONDS = 2  # 🚀 MODIFIÉ : Fréquence du cycle : 2 secondes (Recherche rapide)
 
 # --- Paramètres de Simulation ---
-TRADE_AMOUNT_USDC = 1.0  # Capital simulé par trade (en USDC)
-LEVERAGE = 5             # Levier simulé
-TAKE_PROFIT_PCT = 0.005  # 0.5% de Take Profit
-STOP_LOSS_PCT = 0.5     # 50% de Stop Loss
-REPORT_FREQUENCY = 20    # Fréquence des rapports
+TRADE_AMOUNT_USDC = 1.0   # Capital simulé par trade (en USDC)
+LEVERAGE = 5              # Levier simulé
+TAKE_PROFIT_PCT = 0.005   # 0.5% de Take Profit
+STOP_LOSS_PCT = 0.50      # 50% de Stop Loss
+REPORT_FREQUENCY = 20     # Fréquence des rapports
 
 # --- Capital de Départ Virtuel ---
 INITIAL_BALANCE_USDC = 100.0 
 
-# INITIALISATION DE L'EXCHANGE (Mode Public SANS CLÉS)
+# INITIALISATION DE L'EXCHANGE (Mode Public SANS CLÉS - SPOT)
 exchange = ccxt.binance({
     'enableRateLimit': True, 
     'options': {
@@ -46,10 +45,10 @@ exchange = ccxt.binance({
 })
 
 # --- Variables Globales de Suivi de Performance (Simulées) ---
-TRANSACTION_COUNT = 0                 
-WIN_COUNT = 0                         
-LOSS_COUNT = 0                        
-open_positions = {}                   
+TRANSACTION_COUNT = 0             
+WIN_COUNT = 0                     
+LOSS_COUNT = 0                    
+open_positions = {}               
 SIM_BALANCE_USDC = INITIAL_BALANCE_USDC 
 
 # =====================================================================
@@ -69,7 +68,7 @@ def send_telegram_message(message):
     payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'Markdown'}
     
     try:
-        response = requests.post(url, data=payload)
+        response = requests.post(url, data=payload, timeout=5)
         response.raise_for_status() 
         
     except requests.exceptions.RequestException as e:
@@ -108,30 +107,33 @@ def fetch_ohlcv(symbol, timeframe, limit):
         return pd.DataFrame()
 
 def check_trade_signal(df):
-    """ Vérifie la condition de signal SHORT (RSI > 70). """
+    """ 
+    Vérifie la condition de signal SHORT (RSI > 65) 
+    et retourne True, Prix, et la valeur RSI.
+    """
     if df.empty or len(df) < RSI_LENGTH:
-        return False, None
+        return False, None, None # Ajout du RSI dans le retour
         
     # Calcul des indicateurs
     df['RSI_14'] = ta.rsi(df['Close'], length=RSI_LENGTH)
     df.dropna(subset=['RSI_14'], inplace=True) 
     
     if df.empty:
-        return False, None
+        return False, None, None # Ajout du RSI dans le retour
         
     last = df.iloc[-1]
     
-    # LOGIQUE SHORT : Vente si RSI > 70 (Surachat)
+    # LOGIQUE SHORT : Vente si RSI > 65 (Surachat)
     if last['RSI_14'] > RSI_ENTRY_LEVEL: 
-        return True, last['Close']
+        return True, last['Close'], last['RSI_14'] # Retourne le RSI
         
-    return False, None
+    return False, None, None # Ajout du RSI dans le retour
 
 # =====================================================================
 # ÉTAPE 3 : FONCTIONS DE PAPER TRADING (SIMULÉES)
 # =====================================================================
 
-def execute_simulated_trade(symbol, entry_price):
+def execute_simulated_trade(symbol, entry_price, rsi_value):
     """ 
     Simule l'ouverture d'une position SHORT (Ordre de Marché).
     """
@@ -149,13 +151,14 @@ def execute_simulated_trade(symbol, entry_price):
         'entry_price': entry_price,
         'amount': amount_in_base_asset,
         'entry_time': time.time(),
+        'rsi_at_entry': rsi_value, # Stocke le RSI
         # Calcul inverse pour SHORT :
-        'tp_price': entry_price * (1 - TAKE_PROFIT_PCT), # TP = Prix en baisse de 1.5%
-        'sl_price': entry_price * (1 + STOP_LOSS_PCT)  # SL = Prix en hausse de 50%
+        'tp_price': entry_price * (1 - TAKE_PROFIT_PCT), 
+        'sl_price': entry_price * (1 + STOP_LOSS_PCT)  
     }
     
     print("-" * 50)
-    print(f"📝 SHORT OUVERT (SIMULÉ, Ordre de Marché) sur {symbol} | Entrée: {entry_price:.4f}") 
+    print(f"📝 SHORT OUVERT (SIMULÉ, Ordre de Marché) sur {symbol} | Entrée: {entry_price:.4f} | RSI: {rsi_value:.2f}") 
     return True
 
 def simulate_close_trade(symbol, current_price):
@@ -177,12 +180,13 @@ def simulate_close_trade(symbol, current_price):
         # 🟢 GAIN : Le prix a baissé jusqu'au TP 🟢
         result = "GAIN (TP)"
         WIN_COUNT += 1
-        close_price = trade['tp_price'] # Exécution au prix limite exact
+        close_price = trade['tp_price'] 
         
     elif current_price >= trade['sl_price']:
         # 🔴 PERTE : Le prix a monté jusqu'au SL 🔴
         result = "PERTE (SL)"
         LOSS_COUNT += 1
+        close_price = trade['sl_price']
 
     else:
         return False # Pas de clôture, le script continue
@@ -273,10 +277,12 @@ def run_bot():
                 
                 # B. RECHERCHE DE NOUVEAUX SIGNAUX (SANS limite)
                 elif symbol not in open_positions: 
-                    signal_detected, entry_price = check_trade_signal(data)
+                    # 💡 Changement : Récupère maintenant 3 valeurs (signal, prix, rsi)
+                    signal_detected, entry_price, rsi_value = check_trade_signal(data) 
                     
                     if signal_detected:
-                        execute_simulated_trade(symbol, entry_price) 
+                        # 💡 Changement : Passe la valeur RSI à la fonction d'exécution
+                        execute_simulated_trade(symbol, entry_price, rsi_value) 
 
 
             # 4. Temps d'attente fixe (2 secondes)
