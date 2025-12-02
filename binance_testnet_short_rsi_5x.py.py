@@ -1,18 +1,18 @@
-import ccxt
 import time
+import requests
 import random
 import datetime
+import ccxt
 import pandas as pd
 import pandas_ta as ta
-import requests
 
-# ====================================================================
-# 1. PARAMÈTRES ET CONFIGURATION
-# ====================================================================
+# =====================================================================
+# ÉTAPE 1 : CONFIGURATION ET PARAMÈTRES (SIMULATION SHORT)
+# =====================================================================
 
-# --- Clés API (Binance Testnet Futures) ---
-API_KEY = 'YOUR_API_KEY'
-SECRET = 'YOUR_SECRET_KEY'
+# --- Clés API ---
+API_KEY = 'VOTRE_CLE_API' 
+SECRET = 'VOTRE_SECRET_API' 
 
 # --- Configuration Telegram ---
 TELEGRAM_BOT_TOKEN = '7751726920:AAEMIJqpRw91POu_RDUTN8SOJvMvWSxcuz4' 
@@ -24,30 +24,29 @@ exchange = ccxt.binance({
     'secret': SECRET,
     'enableRateLimit': True,
     'options': {
-        'defaultType': 'future', # Mode Futures pour la simplicité du SHORT
+        'defaultType': 'future',
         'testnet': True,
     }
 })
 
-# --- Paramètres de Stratégie & Trading ---
-TIMEFRAME = '1m'               # Unité de temps de scalping
+# --- Paramètres de la Stratégie (SHORT) ---
+TIMEFRAME = '1m'
 RSI_LENGTH = 14
-RSI_ENTRY_LEVEL = 65           # Entrée SHORT si RSI > 65
-RSI_EXIT_LEVEL = 50            # Sortie RSI (si le TP/SL n'est pas touché)
+RSI_ENTRY_LEVEL = 65     # Entrée SHORT si RSI > 65
+RSI_EXIT_LEVEL = 50      # NON UTILISÉ pour la sortie
+MAX_SYMBOLS_TO_SCAN = 5  
+INITIAL_BALANCE_USDT = 1000.0 # Utilisé en USDT pour la compatibilité API
+ENTRY_SIZE_PERCENT = 0.05 
+MAX_OPEN_POSITIONS = 30 
 
-MAX_SYMBOLS_TO_SCAN = 5        # Vitesse : Scanner seulement 5 paires pour un cycle rapide
-INITIAL_BALANCE_USDT = 1000.00 # Solde de départ de la simulation (USDT)
-ENTRY_SIZE_PERCENT = 0.05      # 5% du capital par position
-LEVERAGE = 5                   # Levier souhaité (x5)
+# --- Scalping / Fréquence du Cycle ---
+PROFIT_SCALPING_PERCENT = 0.005 # Take Profit fixe à 0.5%
+STOP_LOSS_PERCENT = 0.05        # 🔴 MODIFIÉ : Stop Loss fixe à 5.0%
+TIME_TO_WAIT_SECONDS = 7 
 
-# --- Paramètres de Scalping Rapide (Sorties) ---
-TAKE_PROFIT_PERCENT = 0.005    # 0.5% (Sortie rapide pour scalping)
-STOP_LOSS_PERCENT = 0.01       # 1% (Stop Loss)
-TIME_TO_WAIT_SECONDS = 7       # Fréquence : 7 secondes (compromis sûr contre Erreur 429)
-
-# ====================================================================
-# 2. GESTION DES POSITIONS ET MESSAGES
-# ====================================================================
+# =====================================================================
+# ÉTAPE 2 : GESTION DES POSITIONS ET MESSAGES (SHORT)
+# =====================================================================
 
 open_positions = {}
 simulated_balance = INITIAL_BALANCE_USDT
@@ -67,47 +66,44 @@ def send_telegram_message(message):
             print(f"[ERREUR TELEGRAM] Impossible d'envoyer le message : {e}")
 
 def get_entry_size(current_price):
-    """Calcule la taille de l'entrée en fonction du % de la balance et du levier."""
+    """Calcule la taille de l'entrée en fonction du % de la balance."""
     global simulated_balance
-    notional_size = simulated_balance * ENTRY_SIZE_PERCENT * LEVERAGE
-    return notional_size / current_price
+    amount_to_risk = simulated_balance * ENTRY_SIZE_PERCENT
+    return amount_to_risk / current_price
 
 def get_random_pairs(max_count):
     """
-    CORRIGÉ : Récupère une liste aléatoire de paires futures/USDT à scanner.
-    Cible /USDT pour éviter l'erreur de symbole.
+    CORRECTION : Récupère une liste aléatoire de paires futures/USDT valides.
     """
     try:
         markets = exchange.load_markets()
         usdt_futures = [symbol for symbol in markets 
                         if symbol.endswith('/USDT') and 'USD' not in symbol]
-                        
         return random.sample(usdt_futures, min(max_count, len(usdt_futures)))
     except Exception as e:
         print(f"❌ Erreur lors de la récupération des symboles: {e}")
         return []
 
-def execute_simulated_trade(symbol, current_price, rsi_value):
-    """Execute un trade simulé (ouverture SHORT)."""
+def execute_simulated_trade(symbol, direction, current_price, rsi_value):
+    """Execute un trade simulé (ouverture)."""
     global simulated_balance
 
     entry_amount = get_entry_size(current_price)
     
-    # Enregistrement de la position
     open_positions[symbol] = {
-        'direction': 'SHORT',
+        'symbol': symbol,
+        'direction': direction,
         'entry_price': current_price,
         'entry_time': datetime.datetime.now(),
         'amount': entry_amount,
         'rsi_at_entry': rsi_value
     }
-
-    # NOTE : PAS DE NOTIFICATION TELEGRAM ICI (pour ne notifier que les clôtures)
+    
+    # PAS DE NOTIFICATION TELEGRAM À L'OUVERTURE
     print(f"📝 SHORT OUVERT (SIMULÉ) sur {symbol} | Entrée: {current_price:.4f} | RSI: {rsi_value:.2f}")
 
-
-def simulate_close_trade(symbol, current_price, reason="RSI Exit"):
-    """Simule la clôture d'une position ouverte et envoie la notification."""
+def simulate_close_trade(symbol, current_price, reason="Clôture"):
+    """Simule la clôture d'une position ouverte et ENVOIE LA NOTIFICATION."""
     global simulated_balance
     
     position = open_positions.pop(symbol)
@@ -117,9 +113,10 @@ def simulate_close_trade(symbol, current_price, reason="RSI Exit"):
     
     # Calcul du P&L (SHORT)
     pnl = (entry_price - current_price) * amount
+        
     simulated_balance += pnl
     
-    # Envoi de la notification Telegram (UNIQUEMENT pour la clôture)
+    # Alerte Telegram (UNIQUEMENT POUR LA CLÔTURE)
     direction = position['direction']
     pnl_percent = (pnl / (position['entry_price'] * amount)) * 100
     
@@ -134,12 +131,11 @@ def simulate_close_trade(symbol, current_price, reason="RSI Exit"):
     print(message)
     send_telegram_message(message)
 
-# ====================================================================
-# 3. LOGIQUE DE TRADING (SHORT)
-# ====================================================================
+# =====================================================================
+# ÉTAPE 3 : LOGIQUE DE TRADING (SHORT)
+# =====================================================================
 
 def check_short_strategy(symbol):
     """Vérifie la stratégie RSI pour les ventes à découvert (SHORT)."""
     try:
-        # Récupération des données historiques (OHLCV)
-        ohlcv = exchange.fetch_ohlcv(symbol, TIMEFRAME,
+        # Récupération des données historiques (OH
