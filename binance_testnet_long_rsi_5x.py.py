@@ -1,7 +1,7 @@
 import ccxt
 import pandas as pd
 import numpy as np 
-# import pandas_ta as ta  # Reste commenté pour la stabilité
+# import pandas_ta as ta 
 import time
 import requests 
 import random 
@@ -18,20 +18,20 @@ API_KEY = 'i6NcQsRfIn0RAWU7AHIBOEsK9ocFIAbjcnpiWyGb4thC10etiIDbHGWZao6BiVZK'
 SECRET = '9dSivwWbTFYT0ZlBgdhkdFgAJ0bIT4nFfAWrS2GTO467QiGtsDBzBd6zxFD0758L'
 
 # --- Configuration Telegram (OBLIGATOIRE) ---
-TELEGRAM_BOT_TOKEN = '7751726920:AAEMIJqpRw91POu_RDUTN8SOJbMvWSxcuz4' 
+TELEGRAM_BOT_TOKEN = '7751726920:AAEMIJqpRw91POu_RDUTN8SOJvMvWSxcuz4' 
 TELEGRAM_CHAT_ID = '5104739573' 
 
 # --- Paramètres de la Stratégie (LONG) ---
 TIMEFRAME = '1m'          
 RSI_LENGTH = 14          
 RSI_ENTRY_LEVEL = 15     # ACHAT si RSI < 15
-MAX_SYMBOLS_TO_SCAN = 30 # 🟢 MODIFIÉ : Scan de 30 paires
-TIME_TO_WAIT_SECONDS = 5  # 🟢 MODIFIÉ : 5 secondes d'attente pour respecter les limites API
+MAX_SYMBOLS_TO_SCAN = 30 # Scan des 30 paires les plus liquides
+TIME_TO_WAIT_SECONDS = 5 # 5 secondes d'attente pour respecter les limites API
 
 # --- Paramètres de Trading Réel ---
-COLLATERAL_AMOUNT_USDC = 20.0  # Montant à 20.0 USDC (pour Notional)
-TAKE_PROFIT_PCT = 0.005        
-STOP_LOSS_PCT = 0.50           
+COLLATERAL_AMOUNT_USDC = 20.0  # CORRIGÉ : Montant à 20.0 USDC pour garantir le passage du filtre Notional
+TAKE_PROFIT_PCT = 0.005        # 0.5% (TP)
+STOP_LOSS_PCT = 0.50           # 50% (SL)
 EQUITY_REPORT_INTERVAL_SECONDS = 300 
 
 # INITIALISATION DE L'EXCHANGE (BINANCE SPOT SIMPLE)
@@ -70,7 +70,7 @@ def send_telegram_message(message):
         print(f"❌ ÉCHEC TELEGRAM : {e}")
 
 def get_usdc_symbols():
-    """ Récupère les symboles /USDC ou /USDT les plus liquides. """
+    """ Récupère les symboles /USDC ou /USDT les plus liquides (filtrés par volume). """
     global exchange, MAX_SYMBOLS_TO_SCAN
     try:
         # 1. Récupérer les informations de trading (tickers) qui contiennent le volume
@@ -164,7 +164,7 @@ def execute_live_trade(symbol, entry_price, rsi_value=None):
     
     quote_asset = exchange.markets[symbol]['quote'] 
     
-    # Utilise COLLATERAL_AMOUNT_USDC (maintenant 20.0)
+    # 1. Calcul de la quantité à acheter (base_asset)
     amount_base_asset = COLLATERAL_AMOUNT_USDC / entry_price
     amount_base_asset = exchange.amount_to_precision(symbol, amount_base_asset)
     
