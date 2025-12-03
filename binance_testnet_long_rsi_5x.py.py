@@ -29,7 +29,7 @@ MAX_SYMBOLS_TO_SCAN = 15 # Scan de 15 paires
 TIME_TO_WAIT_SECONDS = 3  # 3 secondes d'attente
 
 # --- Paramètres de Trading Réel ---
-COLLATERAL_AMOUNT_USDC = 10.0  # 🟢 MODIFIÉ : Réduit à 10.0 USDC (max 10) pour la sécurité des frais
+COLLATERAL_AMOUNT_USDC = 2.0  # 🟢 MODIFIÉ : Le montant misé par transaction est maintenant de 2.0 USDC maximum
 TAKE_PROFIT_PCT = 0.005        # 0.5% (TP)
 STOP_LOSS_PCT = 0.50           # 50% (SL)
 EQUITY_REPORT_INTERVAL_SECONDS = 300 
@@ -70,7 +70,7 @@ def send_telegram_message(message):
         print(f"❌ ÉCHEC TELEGRAM : {e}")
 
 def get_usdc_symbols():
-    """ 🟢 MODIFIÉ : Récupère les symboles Spot actifs, filtrés par Min Notional <= 2.0 USDC. """
+    """ Récupère les symboles Spot actifs, filtrés par Min Notional <= 2.0 USDC. """
     global exchange, MAX_SYMBOLS_TO_SCAN
     try:
         markets = exchange.load_markets()
@@ -238,7 +238,10 @@ def close_live_trade(symbol, current_price):
     else:
         return False 
 
-    amount_to_sell = trade['amount']
+    # CORRECTION DE L'ERREUR DE CLÔTURE SPOT (Tolérance aux frais)
+    FEE_TOLERANCE = 0.9999 # Réduit de 0.01% pour laisser de la marge pour les frais et la précision
+    amount_to_sell = trade['amount'] * FEE_TOLERANCE
+    amount_to_sell = exchange.amount_to_precision(symbol, amount_to_sell)
 
     try:
         # COMMANDE DE VENTE (LONG EXIT)
