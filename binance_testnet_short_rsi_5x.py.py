@@ -1,6 +1,6 @@
 import ccxt
 import pandas as pd
-import pandas_ta as ta
+# import pandas_ta as ta  # 🛑 COMMENTÉ POUR ÉVITER LE PLANTAGE NATIF (Numba)
 import time
 import requests 
 import random 
@@ -11,11 +11,11 @@ import sys
 # ÉTAPE 1 : CONFIGURATION ET PARAMÈTRES (LIVE TRADING SPOT MARGIN)
 # =====================================================================
 
-# --- Clés API (OBLIGATOIRE pour le Live Trading) ---
+# --- Clés API ---
 API_KEY = 'i6NcQsRfIn0RAWU7AHIBOEsK9ocFIAbjcnpiWyGb4thC10etiIDbHGWZao6BiVZK' 
 SECRET = '9dSivwWbTFYT0ZlBgdhkdFgAJ0bIT4nFfAWrS2GTO467QiGtsDBzBd6zxFD0758L'
 
-# --- Configuration Telegram (OBLIGATOIRE) ---
+# --- Configuration Telegram ---
 TELEGRAM_BOT_TOKEN = '7751726920:AAEMIJqpRw91POu_RDUTN8SOJvMvWSxcuz4' 
 TELEGRAM_CHAT_ID = '5104739573' 
 
@@ -26,17 +26,15 @@ RSI_ENTRY_LEVEL = 70
 MAX_SYMBOLS_TO_SCAN = 10 
 TIME_TO_WAIT_SECONDS = 2  
 
-# --- Paramètres de Trading Réel (Collatéral adapté à votre capital de 23 USDC) ---
-COLLATERAL_AMOUNT_USDC = 2.0   # Marge utilisée par trade (2.0 USDC)
+# --- Paramètres de Trading Réel ---
+COLLATERAL_AMOUNT_USDC = 2.0   
 LEVERAGE = 5                   
-TAKE_PROFIT_PCT = 0.005        # 0.5% (TP)
-STOP_LOSS_PCT = 0.50           # 50% (SL)
+TAKE_PROFIT_PCT = 0.005        
+STOP_LOSS_PCT = 0.50           
 REPORT_FREQUENCY = 20          
-
-# Paramètre de rapport d'équité périodique
 EQUITY_REPORT_INTERVAL_SECONDS = 300 
 
-# INITIALISATION DE L'EXCHANGE (BINANCE SPOT MARGIN ISOLÉ)
+# INITIALISATION DE L'EXCHANGE
 exchange = ccxt.binance({
     'apiKey': API_KEY,
     'secret': SECRET,
@@ -78,15 +76,16 @@ def get_usdc_symbols():
     """ 
     Récupère les symboles et filtre pour ne garder que les 10 paires maximum 
     pour lesquelles un compte de Marge Isolée est déjà configuré (activé).
+    (Robustesse ajoutée pour les erreurs d'API/configuration)
     """
-    global exchange # Sécurité
+    global exchange
     
     try:
         all_isolated_accounts = exchange.sapi_get_margin_isolated_all_account()
         
         activated_symbol_ids = {
             exchange.safe_value(account, 'symbol') 
-            for account in all_isolated_accounts['assets'] 
+            for account in all_isolated_accounts.get('assets', []) 
         }
         
         markets = exchange.load_markets()
@@ -108,14 +107,14 @@ def get_usdc_symbols():
         return random.sample(usdc_symbols, min(len(usdc_symbols), MAX_SYMBOLS_TO_SCAN))
         
     except ccxt.ExchangeError as e:
-        print(f"❌ Erreur API Binance lors de la vérification de la marge isolée: {e}. (Vérifiez l'autorisation 'Enable Margin' de la clé API)")
+        print(f"❌ Erreur API Binance lors de la vérification de la marge isolée: {e}. (Vérifiez la configuration de la Marge Isolée)")
         return [] 
     except Exception as e:
-        print(f"❌ Erreur inattendue dans get_usdc_symbols: {e}")
+        print(f"❌ Erreur inattendue et critique dans get_usdc_symbols: {e}")
         return []
 
 def fetch_ohlcv(symbol, timeframe, limit):
-    global exchange # Sécurité
+    global exchange
     try:
         ohlcv = exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
         df = pd.DataFrame(ohlcv, columns=['Timestamp', 'Open', 'High', 'Low', 'Close', 'Volume'])
@@ -126,21 +125,28 @@ def fetch_ohlcv(symbol, timeframe, limit):
         return pd.DataFrame()
 
 def check_trade_signal(df):
-    if df.empty or len(df) < RSI_LENGTH:
-        return False, None, None
-        
-    df['RSI_14'] = ta.rsi(df['Close'], length=RSI_LENGTH)
-    df.dropna(subset=['RSI_14'], inplace=True) 
-    
-    if df.empty:
-        return False, None, None
-        
-    last = df.iloc[-1]
-    
-    if last['RSI_14'] > RSI_ENTRY_LEVEL: 
-        return True, last['Close'], last['RSI_14']
-        
+    """ 
+    FONCTION ACTUELLEMENT DÉSACTIVÉE (RSI non calculé)
+    Retourne False pour éviter le plantage lié à pandas-ta/numba.
+    """
     return False, None, None
+    
+    # if df.empty or len(df) < RSI_LENGTH:
+    #     return False, None, None
+        
+    # # Réactiver ceci après avoir résolu le problème Numba/Python
+    # df['RSI_14'] = ta.rsi(df['Close'], length=RSI_LENGTH) 
+    # df.dropna(subset=['RSI_14'], inplace=True) 
+    
+    # if df.empty:
+    #     return False, None, None
+        
+    # last = df.iloc[-1]
+    
+    # if last['RSI_14'] > RSI_ENTRY_LEVEL: 
+    #     return True, last['Close'], last['RSI_14']
+        
+    # return False, None, None
 
 # =====================================================================
 # ÉTAPE 3 : FONCTIONS DE LIVE TRADING (SPOT MARGIN)
@@ -148,7 +154,7 @@ def check_trade_signal(df):
 
 def transfer_collateral_to_isolated_margin(symbol, amount):
     """ Tente de transférer le collatéral du compte Spot vers le compte Marge Isolé. """
-    global exchange # Sécurité
+    global exchange
     quote_asset = exchange.markets[symbol]['quote'] 
     try:
         transfer = exchange.transfer(
@@ -173,7 +179,7 @@ def transfer_collateral_to_isolated_margin(symbol, amount):
 
 def execute_live_trade(symbol, entry_price, rsi_value):
     """ Exécute un trade SHORT réel sur Binance Spot Margin. """
-    global open_positions, exchange # Sécurité
+    global open_positions, exchange
     
     base_asset = exchange.markets[symbol]['base'] 
     quote_asset = exchange.markets[symbol]['quote'] 
@@ -222,7 +228,6 @@ def execute_live_trade(symbol, entry_price, rsi_value):
             f"✅ **SHORT OUVERT - LIVE MARGIN**\n"
             f"=======================\n"
             f"Asset: **{symbol}** (RSI: {rsi_value:.2f})\n"
-            f"Entrée: {open_positions[symbol]['entry_price']:.4f}\n"
             f"Marge: {COLLATERAL_AMOUNT_USDC} {quote_asset} | Levier: 5x\n"
             f"TP: {tp_price:.4f} | SL: {sl_price:.4f}"
         )
@@ -241,7 +246,7 @@ def execute_live_trade(symbol, entry_price, rsi_value):
 
 def close_live_trade(symbol, current_price):
     """ Gère la fermeture d'une position Short Spot Margin (TP/SL) et le remboursement. """
-    global open_positions, TRANSACTION_COUNT, WIN_COUNT, LOSS_COUNT, exchange # Sécurité
+    global open_positions, TRANSACTION_COUNT, WIN_COUNT, LOSS_COUNT, exchange
     
     if symbol not in open_positions:
         return False
@@ -302,7 +307,7 @@ def close_live_trade(symbol, current_price):
 
 def get_live_equity_and_pnl():
     """ Récupère le solde réel du compte Spot pour le rapport. """
-    global exchange # Sécurité
+    global exchange
     try:
         balance = exchange.fetch_balance(params={'type': 'spot'})
         total_usd_balance = balance['total'].get('USDC', 0) + balance['total'].get('USDT', 0)
@@ -324,15 +329,15 @@ def send_equity_report():
     send_telegram_message(report_message)
 
 # =====================================================================
-# ÉTAPE 5 : LA BOUCLE PRINCIPALE 24/7 (MODIFIÉE)
+# ÉTAPE 5 : LA BOUCLE PRINCIPALE 24/7
 # =====================================================================
 
 def run_bot():
     """ Boucle principale qui exécute l'analyse et le trading réel. """
     global last_equity_report_time
-    global exchange # 🚨 CORRECTION CRITIQUE : Assurer l'accès à l'objet CCXT
+    global exchange # 🟢 CORRECTION DE PORTÉE
     
-    # 🚨 LIGNE DE DÉBOGAGE AJOUTÉE 🚨
+    # 🚨 LIGNE DE DÉBOGAGE 🚨
     print(">>> PYTHON SCRIPT STARTED: Tentative de connexion API Binance...")
     
     try:
@@ -346,7 +351,6 @@ def run_bot():
         print("Veuillez vérifier vos API KEY/SECRET et l'accès Marge Spot. Arrêt du bot.")
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         
-        # On force l'arrêt après l'affichage de l'erreur
         sys.exit(1) 
 
     print(f"🤖 Bot SHORT LIVE SPOT MARGIN démarré (RSI > {RSI_ENTRY_LEVEL}, UT: {TIMEFRAME}).")
@@ -384,7 +388,8 @@ def run_bot():
                 
                 if data.empty:
                     continue
-
+                
+                # Le signal retourne FAUX car la fonction check_trade_signal est désactivée.
                 signal_detected, entry_price, rsi_value = check_trade_signal(data) 
                 
                 if signal_detected:
