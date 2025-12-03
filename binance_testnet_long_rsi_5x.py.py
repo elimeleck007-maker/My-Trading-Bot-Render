@@ -1,7 +1,7 @@
 import ccxt
 import pandas as pd
-import numpy as np # 🟢 AJOUTÉ POUR LE CALCUL MANUEL DU RSI
-# import pandas_ta as ta  # 🛑 ENCORE COMMENTÉ : Car non nécessaire/plante
+import numpy as np # Pour le calcul manuel du RSI
+# import pandas_ta as ta  # Reste commenté pour la stabilité
 import time
 import requests 
 import random 
@@ -23,13 +23,13 @@ TELEGRAM_CHAT_ID = '5104739573'
 
 # --- Paramètres de la Stratégie (LONG) ---
 TIMEFRAME = '1m'          
-RSI_LENGTH = 14          # Longueur du RSI (Période)
-RSI_ENTRY_LEVEL = 15     # ACHAT si RSI < 15 (Ultra-Survente)
+RSI_LENGTH = 14          
+RSI_ENTRY_LEVEL = 15     # ACHAT si RSI < 15
 MAX_SYMBOLS_TO_SCAN = 10 
 TIME_TO_WAIT_SECONDS = 2  
 
 # --- Paramètres de Trading Réel ---
-COLLATERAL_AMOUNT_USDC = 2.0   # Montant dépensé par achat (en USDC/USDT)
+COLLATERAL_AMOUNT_USDC = 11.0  # 🟢 CORRIGÉ : Montant à 11.0 USDC pour dépasser le seuil Notional (généralement 10)
 TAKE_PROFIT_PCT = 0.005        # 0.5% (TP)
 STOP_LOSS_PCT = 0.50           # 50% (SL)
 EQUITY_REPORT_INTERVAL_SECONDS = 300 
@@ -120,7 +120,7 @@ def calculate_rsi(df, length=14):
     return df['RSI']
 
 def check_trade_signal(df):
-    """ 🟢 APPLIQUE LA LOGIQUE RSI IMMÉDIATEMENT (avec calcul manuel). """
+    """ APPLIQUE LA LOGIQUE RSI IMMÉDIATEMENT (avec calcul manuel). """
     global RSI_LENGTH, RSI_ENTRY_LEVEL
     
     # S'assurer qu'il y a assez de données pour le RSI
@@ -138,7 +138,7 @@ def check_trade_signal(df):
         
     last = df.iloc[-1]
     
-    # LOGIQUE LONG : Acheter si le RSI est sous le seuil (Ultra-survente)
+    # LOGIQUE LONG : Acheter si le RSI est sous le seuil
     if last['RSI_14'] < RSI_ENTRY_LEVEL: 
         return True, last['Close'], last['RSI_14']
         
@@ -155,6 +155,7 @@ def execute_live_trade(symbol, entry_price, rsi_value=None):
     quote_asset = exchange.markets[symbol]['quote'] # USDC/USDT
     
     # 1. Calcul de la quantité à acheter (base_asset)
+    # Utilise COLLATERAL_AMOUNT_USDC (maintenant 11.0)
     amount_base_asset = COLLATERAL_AMOUNT_USDC / entry_price
     amount_base_asset = exchange.amount_to_precision(symbol, amount_base_asset)
     
@@ -189,7 +190,7 @@ def execute_live_trade(symbol, entry_price, rsi_value=None):
         send_telegram_message(
             f"✅ **LONG OUVERT - LIVE SPOT**\n"
             f"=======================\n"
-            f"Asset: **{symbol}** (RSI: {rsi_value:.2f} si actif)\n"
+            f"Asset: **{symbol}** (RSI: {rsi_value:.2f})\n"
             f"Entrée: {open_positions[symbol]['entry_price']:.4f}\n"
             f"Montant: {real_amount_base:.4f} {symbol.split('/')[0]}\n"
             f"TP: {tp_price:.4f} | SL: {sl_price:.4f}"
@@ -350,7 +351,7 @@ def run_bot():
                 if data.empty:
                     continue
                 
-                # Le signal utilise maintenant le calcul RSI manuel
+                # Le signal utilise le calcul RSI manuel
                 signal_detected, entry_price, rsi_value = check_trade_signal(data) 
                 
                 if signal_detected:
@@ -378,7 +379,7 @@ def run_bot():
             time.sleep(15) 
 
         except Exception as e:
-            error_message = f"❌ ERREUR CRITIQUE DANS LE BOT : Redémarrage du cycle. Détail: {e}"
+            error_message = f"❌ ERREUR CRITIQUE DANS LE BOT : Redémarrage du cycle. Détail: {e}")
             print(error_message)
             send_telegram_message(f"🚨 **ALERTE CRASH POTENTIEL** 🚨\n{error_message}")
             time.sleep(30) 
