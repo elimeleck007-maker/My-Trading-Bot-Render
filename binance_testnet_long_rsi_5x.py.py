@@ -24,14 +24,14 @@ TELEGRAM_CHAT_ID = '5104739573'
 # --- Paramètres de la Stratégie (LONG) ---
 TIMEFRAME = '1m'          
 RSI_LENGTH = 14          
-RSI_ENTRY_LEVEL = 15     # 🟢 MODIFIÉ : ACHAT si RSI < 15 (Ultra-survente)
-MAX_SYMBOLS_TO_SCAN = 10 # Scan aléatoire des 10 symboles
-TIME_TO_WAIT_SECONDS = 2  # Pause courte
+RSI_ENTRY_LEVEL = 15     # ACHAT si RSI < 15 (Ultra-survente)
+MAX_SYMBOLS_TO_SCAN = 15 # Scan de 15 paires
+TIME_TO_WAIT_SECONDS = 3  # 3 secondes d'attente
 
 # --- Paramètres de Trading Réel ---
-COLLATERAL_AMOUNT_USDC = 20.0  # CONSERVÉ : Montant à 20.0 USDC pour éviter l'erreur NOTIONAL
-TAKE_PROFIT_PCT = 0.005        
-STOP_LOSS_PCT = 0.50           
+COLLATERAL_AMOUNT_USDC = 10.0  # 🟢 MODIFIÉ : Réduit à 10.0 USDC (max 10) pour la sécurité des frais
+TAKE_PROFIT_PCT = 0.005        # 0.5% (TP)
+STOP_LOSS_PCT = 0.50           # 50% (SL)
 EQUITY_REPORT_INTERVAL_SECONDS = 300 
 
 # INITIALISATION DE L'EXCHANGE (BINANCE SPOT SIMPLE)
@@ -70,23 +70,31 @@ def send_telegram_message(message):
         print(f"❌ ÉCHEC TELEGRAM : {e}")
 
 def get_usdc_symbols():
-    """ Récupère des symboles Spot /USDC ou /USDT actifs (Scan Aléatoire). """
-    global exchange
+    """ 🟢 MODIFIÉ : Récupère les symboles Spot actifs, filtrés par Min Notional <= 2.0 USDC. """
+    global exchange, MAX_SYMBOLS_TO_SCAN
     try:
         markets = exchange.load_markets()
-        usdc_symbols = [
-            s for s in markets.keys() 
-            if s.endswith('/USDC') or s.endswith('/USDT') and markets[s]['spot'] and markets[s]['active']
-        ]
+        eligible_symbols = []
         
-        if not usdc_symbols:
-            print("❌ ALERTE : Aucun symbole Spot /USDC ou /USDT n'a été trouvé.")
+        for symbol, market in markets.items():
+            is_usdc_usdt = symbol.endswith('/USDC') or symbol.endswith('/USDT')
+            is_active_spot = market['spot'] and market['active']
+            
+            if is_usdc_usdt and is_active_spot:
+                # Tente de récupérer la limite minimale notionale (coût)
+                min_notional_limit = market['limits']['cost']['min'] if market['limits']['cost'] and market['limits']['cost']['min'] else 0
+                
+                # Le filtre d'entrée Min Notional doit être <= 2.0 USDC
+                if min_notional_limit <= 2.0:
+                    eligible_symbols.append(symbol)
+
+        if not eligible_symbols:
+            print("❌ ALERTE : Aucun symbole Spot n'a été trouvé avec une taille minimale <= 2 USDC.")
             return [] 
             
-        print(f"✅ {len(usdc_symbols)} paires Spot actives détectées. Scanning {min(len(usdc_symbols), MAX_SYMBOLS_TO_SCAN)} au hasard.")
+        print(f"✅ {len(eligible_symbols)} paires Spot éligibles (Min Notional <= 2 USDC) détectées. Scanning {min(len(eligible_symbols), MAX_SYMBOLS_TO_SCAN)} au hasard.")
         
-        # Ligne corrigée et stable (ancienne méthode d'échantillonnage aléatoire)
-        return random.sample(usdc_symbols, min(len(usdc_symbols), MAX_SYMBOLS_TO_SCAN))
+        return random.sample(eligible_symbols, min(len(eligible_symbols), MAX_SYMBOLS_TO_SCAN))
         
     except Exception as e:
         print(f"❌ Erreur inattendue dans get_usdc_symbols: {e}")
@@ -321,7 +329,7 @@ def run_bot():
             usdc_symbols = get_usdc_symbols() 
             
             if not usdc_symbols:
-                print(f"\n[{timestamp}] --- AUCUNE PAIRE SPOT TROUVÉE. Vérification dans 60s. ---")
+                print(f"\n[{timestamp}] --- AUCUNE PAIRE SPOT ÉLIGIBLE TROUVÉE. Vérification dans 60s. ---")
                 time.sleep(60)
                 continue
                 
