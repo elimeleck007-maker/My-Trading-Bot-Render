@@ -11,9 +11,9 @@ import datetime
 # =====================================================================
 
 # --- Clés API (OBLIGATOIRE pour le Live Trading) ---
-# NOTE: Ces valeurs sont conservées de votre historique. Vérifiez qu'elles sont correctes.
-API_KEY = 'i6NcQsRfIn0RAWU7AHIBOEsK9ocFIAbjcnpiWyGb4thC10etiIDbHGWZao6BiVZK'  # Remplacer par votre clé API réelle
-SECRET = '9dSivwWbTFYT0ZlBgdhkdFgAJ0bIT4nFfAWrS2GTO467QiGtsDBzBd6zxFD0758L' # Remplacer par votre Secret réel
+# VOS CLÉS D'API SONT ICI.
+API_KEY = 'i6NcQsRfIn0RAWU7AHIBOEsK9ocFIAbjcnpiWyGb4thC10etiIDbHGWZao6BiVZK' 
+SECRET = '9dSivwWbTFYT0ZlBgdhkdFgAJ0bIT4nFfAWrS2GTO467QiGtsDBzBd6zxFD0758L'
 
 # --- Configuration Telegram (OBLIGATOIRE) ---
 TELEGRAM_BOT_TOKEN = '7751726920:AAEMIJqpRw91POu_RDUTN8SOJvMvWSxcuz4' 
@@ -23,7 +23,7 @@ TELEGRAM_CHAT_ID = '5104739573'
 TIMEFRAME = '1m'          
 RSI_LENGTH = 14           
 RSI_ENTRY_LEVEL = 70      
-MAX_SYMBOLS_TO_SCAN = 10  # Limite fixée à 10, conforme à votre restriction Binance
+MAX_SYMBOLS_TO_SCAN = 10 
 TIME_TO_WAIT_SECONDS = 2  
 
 # --- Paramètres de Trading Réel (Collatéral adapté à votre capital de 23 USDC) ---
@@ -405,7 +405,7 @@ def run_bot():
             time.sleep(30) 
 
 # =====================================================================
-# Lancement de l'exécution
+# Lancement de l'exécution (Décommentée pour le lancement)
 # =====================================================================
 
 run_bot()
