@@ -11,9 +11,9 @@ import datetime
 # =====================================================================
 
 # --- Clés API (OBLIGATOIRE pour le Live Trading) ---
-# 🚨🚨 REMPLACEZ PAR VOS VRAIES CLÉS BINANCE SPOT ! 🚨🚨
-API_KEY = 'i6NcQsRfIn0RAWU7AHIBOEsK9ocFIAbjcnpiWyGb4thC10etiIDbHGWZao6BiVZK' 
-SECRET = '9dSivwWbTFYT0ZlBgdhkdFgAJ0bIT4nFfAWrS2GTO467QiGtsDBzBd6zxFD0758L' 
+# NOTE: Ces valeurs sont conservées de votre historique. Vérifiez qu'elles sont correctes.
+API_KEY = 'i6NcQsRfIn0RAWU7AHIBOEsK9ocFIAbjcnpiWyGb4thC10etiIDbHGWZao6BiVZK'  # Remplacer par votre clé API réelle
+SECRET = '9dSivwWbTFYT0ZlBgdhkdFgAJ0bIT4nFfAWrS2GTO467QiGtsDBzBd6zxFD0758L' # Remplacer par votre Secret réel
 
 # --- Configuration Telegram (OBLIGATOIRE) ---
 TELEGRAM_BOT_TOKEN = '7751726920:AAEMIJqpRw91POu_RDUTN8SOJvMvWSxcuz4' 
@@ -26,8 +26,8 @@ RSI_ENTRY_LEVEL = 70
 MAX_SYMBOLS_TO_SCAN = 10  # Limite fixée à 10, conforme à votre restriction Binance
 TIME_TO_WAIT_SECONDS = 2  
 
-# --- Paramètres de Trading Réel (Adapté à votre capital initial de 23 USDC) ---
-COLLATERAL_AMOUNT_USDC = 2.0   # Marge utilisée par trade (2.0 USDC, OK pour 23 USDC total)
+# --- Paramètres de Trading Réel (Collatéral adapté à votre capital de 23 USDC) ---
+COLLATERAL_AMOUNT_USDC = 2.0   # Marge utilisée par trade (2.0 USDC)
 LEVERAGE = 5                   
 TAKE_PROFIT_PCT = 0.005        # 0.5% (TP)
 STOP_LOSS_PCT = 0.50           # 50% (SL)
@@ -80,32 +80,27 @@ def get_usdc_symbols():
     pour lesquelles un compte de Marge Isolée est déjà configuré (activé).
     """
     
-    # 1. Récupérer tous les comptes de Marge Isolée actifs
     try:
         all_isolated_accounts = exchange.sapi_get_margin_isolated_all_account()
         
-        # Extraire les symboles internes (ex: BTCUSDC) où la marge isolée est active
         activated_symbol_ids = {
             exchange.safe_value(account, 'symbol') 
             for account in all_isolated_accounts['assets'] 
         }
         
-        # Convertir les symboles internes au format CCXT (ex: BTC/USDC)
         markets = exchange.load_markets()
         activated_ccxt_symbols = {
             market['symbol'] for market in markets.values() 
             if market['id'] in activated_symbol_ids and market['active']
         }
 
-        # 2. Filtrer pour ne garder que les paires /USDC (ou /USDT)
         usdc_symbols = [
             s for s in activated_ccxt_symbols
             if s.endswith('/USDC') or s.endswith('/USDT')
         ]
         
-        # 3. Sélectionner un maximum de 10 symboles aléatoirement parmi les symboles PRÊTS
         if not usdc_symbols:
-            print("❌ ALERTE : Aucun compte de Marge Isolée /USDC ou /USDT activé n'a été trouvé. Vérifiez l'activation manuelle.")
+            print("❌ ALERTE : Aucun compte de Marge Isolée /USDC ou /USDT activé n'a été trouvé.")
             return [] 
             
         print(f"✅ {len(usdc_symbols)} paires de Marge Isolée activées détectées. Scanning {min(len(usdc_symbols), MAX_SYMBOLS_TO_SCAN)} au hasard.")
@@ -167,7 +162,6 @@ def transfer_collateral_to_isolated_margin(symbol, amount):
             print(f"⚠️ ALERTE : Solde Spot insuffisant en {quote_asset} pour transférer {amount}. Trade annulé.")
             return False
         else:
-            # Si déjà présent ou autre avertissement mineur
             return True
     except Exception as e:
         print(f"❌ Erreur inattendue de transfert: {e}")
@@ -175,9 +169,7 @@ def transfer_collateral_to_isolated_margin(symbol, amount):
 
 
 def execute_live_trade(symbol, entry_price, rsi_value):
-    """ 
-    Exécute un trade SHORT réel sur Binance Spot Margin.
-    """
+    """ Exécute un trade SHORT réel sur Binance Spot Margin. """
     global open_positions
     
     base_asset = exchange.markets[symbol]['base'] 
@@ -245,9 +237,7 @@ def execute_live_trade(symbol, entry_price, rsi_value):
         return False
 
 def close_live_trade(symbol, current_price):
-    """ 
-    Gère la fermeture d'une position Short Spot Margin (TP/SL) et le remboursement.
-    """
+    """ Gère la fermeture d'une position Short Spot Margin (TP/SL) et le remboursement. """
     global open_positions, TRANSACTION_COUNT, WIN_COUNT, LOSS_COUNT
     
     if symbol not in open_positions:
@@ -315,7 +305,6 @@ def get_live_equity_and_pnl():
         return float(total_usd_balance)
 
     except Exception as e:
-        print(f"❌ ERREUR lors du fetch du solde Spot Live: {e}")
         return 0.0
 
 def send_equity_report():
@@ -330,22 +319,6 @@ def send_equity_report():
     )
     send_telegram_message(report_message)
 
-
-def generate_report():
-    """ Génère et envoie le rapport de performance. """
-    global TRANSACTION_COUNT, WIN_COUNT, LOSS_COUNT
-    
-    send_equity_report() 
-
-    win_rate = (WIN_COUNT / TRANSACTION_COUNT) * 100 if TRANSACTION_COUNT > 0 else 0
-    
-    report_message = (
-        f"📊 **RAPPORT DE PERFORMANCE**\n"
-        f"📝 **Statistiques (Total Trades : {TRANSACTION_COUNT})**\n"
-        f"📈 Taux de Succès : {win_rate:.2f} %"
-    )
-    send_telegram_message(report_message)
-
 # =====================================================================
 # ÉTAPE 5 : LA BOUCLE PRINCIPALE 24/7
 # =====================================================================
@@ -355,11 +328,12 @@ def run_bot():
     global last_equity_report_time
     
     try:
+        # Tentative de connexion / authentification
         exchange.fetch_balance(params={'type': 'spot'})
         print(f"✅ CONNEXION BINANCE SPOT MARGIN ÉTABLIE.")
     except Exception as e:
         print(f"❌ ERREUR DE CONNEXION/AUTHENTIFICATION: {e}")
-        print("Veuillez vérifier vos API KEY/SECRET et l'accès Marge Spot.")
+        print("Veuillez vérifier vos API KEY/SECRET et l'accès Marge Spot. Arrêt du bot.")
         return 
 
     print(f"🤖 Bot SHORT LIVE SPOT MARGIN démarré (RSI > {RSI_ENTRY_LEVEL}, UT: {TIMEFRAME}).")
@@ -430,5 +404,8 @@ def run_bot():
             send_telegram_message(f"🚨 **ALERTE CRASH POTENTIEL** 🚨\n{error_message}")
             time.sleep(30) 
 
-# Décommentez la ligne ci-dessous pour lancer le bot EN LIVE SUR MARGE SPOT !
+# =====================================================================
+# Lancement de l'exécution
+# =====================================================================
+
 run_bot()
