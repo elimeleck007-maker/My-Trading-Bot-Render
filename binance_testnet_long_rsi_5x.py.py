@@ -24,14 +24,14 @@ TELEGRAM_CHAT_ID = '5104739573'
 # --- Paramètres de la Stratégie (LONG) ---
 TIMEFRAME = '1m'          
 RSI_LENGTH = 14          
-RSI_ENTRY_LEVEL = 15     # ACHAT si RSI < 15
-MAX_SYMBOLS_TO_SCAN = 30 # Scan des 30 paires les plus liquides
-TIME_TO_WAIT_SECONDS = 5 # 5 secondes d'attente pour respecter les limites API
+RSI_ENTRY_LEVEL = 15     # 🟢 MODIFIÉ : ACHAT si RSI < 15 (Ultra-survente)
+MAX_SYMBOLS_TO_SCAN = 10 # Scan aléatoire des 10 symboles
+TIME_TO_WAIT_SECONDS = 2  # Pause courte
 
 # --- Paramètres de Trading Réel ---
-COLLATERAL_AMOUNT_USDC = 20.0  # CORRIGÉ : Montant à 20.0 USDC pour garantir le passage du filtre Notional
-TAKE_PROFIT_PCT = 0.005        # 0.5% (TP)
-STOP_LOSS_PCT = 0.50           # 50% (SL)
+COLLATERAL_AMOUNT_USDC = 20.0  # CONSERVÉ : Montant à 20.0 USDC pour éviter l'erreur NOTIONAL
+TAKE_PROFIT_PCT = 0.005        
+STOP_LOSS_PCT = 0.50           
 EQUITY_REPORT_INTERVAL_SECONDS = 300 
 
 # INITIALISATION DE L'EXCHANGE (BINANCE SPOT SIMPLE)
@@ -70,34 +70,23 @@ def send_telegram_message(message):
         print(f"❌ ÉCHEC TELEGRAM : {e}")
 
 def get_usdc_symbols():
-    """ Récupère les symboles /USDC ou /USDT les plus liquides (filtrés par volume). """
-    global exchange, MAX_SYMBOLS_TO_SCAN
+    """ Récupère des symboles Spot /USDC ou /USDT actifs (Scan Aléatoire). """
+    global exchange
     try:
-        # 1. Récupérer les informations de trading (tickers) qui contiennent le volume
-        tickers = exchange.fetch_tickers()
+        markets = exchange.load_markets()
+        usdc_symbols = [
+            s for s in markets.keys() 
+            if s.endswith('/USDC') or s.endswith('/USDT') and markets[s]['spot'] and markets[s]['active']
+        ]
         
-        # 2. Filtrer les paires actives Spot en /USDC ou /USDT
-        usdc_usdt_pairs = {}
-        for symbol, ticker in tickers.items():
-            market = exchange.markets.get(symbol)
-            if market and market['spot'] and market['active'] and (symbol.endswith('/USDC') or symbol.endswith('/USDT')):
-                # Utiliser le volume en quote (USDC/USDT) ou base si le volume_quote est 0
-                volume = ticker.get('quoteVolume', 0) 
-                if volume > 0:
-                    usdc_usdt_pairs[symbol] = volume
-
-        if not usdc_usdt_pairs:
+        if not usdc_symbols:
             print("❌ ALERTE : Aucun symbole Spot /USDC ou /USDT n'a été trouvé.")
             return [] 
             
-        # 3. Trier par volume décroissant
-        sorted_pairs = sorted(usdc_usdt_pairs.items(), key=lambda item: item[1], reverse=True)
+        print(f"✅ {len(usdc_symbols)} paires Spot actives détectées. Scanning {min(len(usdc_symbols), MAX_SYMBOLS_TO_SCAN)} au hasard.")
         
-        # 4. Sélectionner les X plus liquides
-        top_symbols = [symbol for symbol, volume in sorted_pairs[:MAX_SYMBOLS_TO_SCAN]]
-            
-        print(f"✅ {len(tickers)} paires détectées. Scanning les {len(top_symbols)} plus liquides.")
-        return top_symbols
+        # Ligne corrigée et stable (ancienne méthode d'échantillonnage aléatoire)
+        return random.sample(usdc_symbols, min(len(usdc_symbols), MAX_SYMBOLS_TO_SCAN))
         
     except Exception as e:
         print(f"❌ Erreur inattendue dans get_usdc_symbols: {e}")
@@ -329,7 +318,6 @@ def run_bot():
         try:
             timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
             
-            # Utilise la nouvelle fonction de sélection par volume
             usdc_symbols = get_usdc_symbols() 
             
             if not usdc_symbols:
