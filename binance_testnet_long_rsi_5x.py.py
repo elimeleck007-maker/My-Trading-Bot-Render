@@ -24,7 +24,7 @@ TELEGRAM_CHAT_ID = '5104739573'
 # --- Paramètres de la Stratégie (LONG) ---
 TIMEFRAME = '1m'          
 RSI_LENGTH = 14          
-RSI_ENTRY_LEVEL = 25     
+RSI_ENTRY_LEVEL = 15     
 MAX_SYMBOLS_TO_SCAN = 30 
 TIME_TO_WAIT_SECONDS = 3  
 
