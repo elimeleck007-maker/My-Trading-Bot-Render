@@ -18,7 +18,6 @@ SECRET = '9dSivwWbTFYT0ZlBgdhkdFgAJ0bIT4nFfAWrS2GTO467QiGtsDBzBd6zxFD0758L'
 
 # --- Configuration Telegram (OBLIGATOIRE) ---
 TELEGRAM_BOT_TOKEN = '7751726920:AAEMIJqpRw91POu_RDUTN8SOJvMvWSxcuz4'
-# ⚠️ ATTENTION : Utilisation du tiret pour l'ID de canal/groupe
 TELEGRAM_CHAT_ID = '-5104739573'
 
 # --- Paramètres de la Stratégie (LONG) ---
@@ -30,7 +29,6 @@ TIME_TO_WAIT_SECONDS = 3
 
 # --- Paramètres de Trading Réel ---
 MAX_OPEN_POSITIONS = 5
-# Montant réduit pour couvrir les frais (0.1%)
 COLLATERAL_AMOUNT_USDC = 1.99   
 TAKE_PROFIT_PCT = 0.003         # 0.3%
 STOP_LOSS_PCT = 0.50            # 50%
@@ -58,7 +56,7 @@ open_positions = {}
 # =====================================================================
 
 def send_telegram_message(message):
-    """ Envoie un message à Telegram sans lever d'exception en cas d'erreur 429. """
+    """ Envoie un message à Telegram. """
     global TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("⚠️ Avertissement: Les clés Telegram sont manquantes. Les notifications sont désactivées.")
@@ -175,7 +173,7 @@ def execute_live_trade(symbol, entry_price, rsi_value=None):
         min_notional = exchange.markets[symbol]['limits']['cost']['min']
         
         if collateral_to_use < min_notional:
-             # ## MODIFICATION CLÉ ## : Pas d'impression pour l'échec d'achat (pour le solde insuffisant)
+             # Mode ultra-silencieux pour les échecs de solde
              return False
 
     except Exception as e:
@@ -227,8 +225,7 @@ def execute_live_trade(symbol, entry_price, rsi_value=None):
         return True
 
     except ccxt.ExchangeError as e:
-        # ## MODIFICATION CLÉ ## : Suppression de TOUTES les impressions d'échec de trading
-        # Le bot gère l'erreur, mais ne la logue pas en console.
+        # Mode ultra-silencieux : aucune impression pour les échecs d'ordre Binance
         return False
     except Exception as e:
         print(f"❌ ERREUR CRITIQUE DANS execute_live_trade: {e}")
@@ -265,7 +262,7 @@ def close_live_trade(symbol, current_price):
         amount_to_sell = exchange.amount_to_precision(symbol, amount_to_sell)
 
         if float(amount_to_sell) < exchange.markets[symbol]['limits']['amount']['min']: 
-             print(f"⚠️ CLÔTURE {symbol}: Solde disponible ({amount_to_sell}) est sous la taille minimale. Position locale supprimée.")
+             # Mode ultra-silencieux : ne pas imprimer l'avertissement de taille minimale
              del open_positions[symbol]
              return False
 
@@ -279,7 +276,7 @@ def close_live_trade(symbol, current_price):
             symbol, 
             'market', 
             'sell', 
-            float(amount_to_sell) # Utiliser le solde réel disponible et précis
+            float(amount_to_sell)
         )
         
         TRANSACTION_COUNT += 1
@@ -301,6 +298,7 @@ def close_live_trade(symbol, current_price):
         return True
 
     except ccxt.ExchangeError as e:
+        # Affiche l'erreur de clôture (cela peut être critique si le bot ne peut pas vendre)
         print(f"❌ ERREUR CLÔTURE {symbol} (SPOT): {e}")
         return False
     except Exception as e:
@@ -312,7 +310,6 @@ def get_live_equity_and_pnl():
     global exchange
     try:
         balance = exchange.fetch_balance(params={'type': 'spot'})
-        # Ne considérer que le solde libre (non bloqué)
         total_usd_balance = balance['free'].get('USDC', 0) + balance['free'].get('USDT', 0)
         return float(total_usd_balance)
 
@@ -368,6 +365,7 @@ def run_bot():
                 time.sleep(60)
                 continue
                 
+            # Les seules impressions en boucle sont ici:
             print(f"\n[{timestamp}] --- Scan du marché démarré ({len(usdc_symbols)} symboles scannés, {len(open_positions)} positions ouvertes locales) ---")
             
             
@@ -381,7 +379,6 @@ def run_bot():
             
             # 2. RECHERCHE DE NOUVEAUX SIGNAUX
             for symbol in usdc_symbols:
-                # VÉRIFICATION : SAUT DE NOUVELLES POSITIONS SI LA LIMITE EST ATTEINTE
                 if len(open_positions) >= MAX_OPEN_POSITIONS:
                     print(f"⚠️ {timestamp} | Limite de {MAX_OPEN_POSITIONS} positions atteintes. Arrêt du scan pour les nouvelles entrées.")
                     break 
@@ -394,7 +391,6 @@ def run_bot():
                 if data.empty:
                     continue
                 
-                # Le signal utilise le calcul RSI manuel
                 signal_detected, entry_price, rsi_value = check_trade_signal(data) 
                 
                 if signal_detected:
