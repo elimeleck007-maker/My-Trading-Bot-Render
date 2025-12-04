@@ -29,7 +29,8 @@ MAX_SYMBOLS_TO_SCAN = 15 # Scan de 15 paires
 TIME_TO_WAIT_SECONDS = 3  # 3 secondes d'attente
 
 # --- Paramètres de Trading Réel ---
-COLLATERAL_AMOUNT_USDC = 2.0  # 🟢 MODIFIÉ : Le montant misé par transaction est maintenant de 2.0 USDC maximum
+MAX_OPEN_POSITIONS = 5         # 🟢 NOUVEAU : Limite maximale de positions ouvertes en simultané
+COLLATERAL_AMOUNT_USDC = 2.0   # Montant misé par transaction (2.0 USDC maximum)
 TAKE_PROFIT_PCT = 0.005        # 0.5% (TP)
 STOP_LOSS_PCT = 0.50           # 50% (SL)
 EQUITY_REPORT_INTERVAL_SECONDS = 300 
@@ -157,8 +158,13 @@ def check_trade_signal(df):
 
 def execute_live_trade(symbol, entry_price, rsi_value=None):
     """ Exécute un trade LONG (achat simple) réel sur Binance Spot. """
-    global open_positions, exchange
+    global open_positions, exchange, COLLATERAL_AMOUNT_USDC, MAX_OPEN_POSITIONS
     
+    # 🟢 VÉRIFICATION : Ne pas ouvrir si la limite maximale est atteinte
+    if len(open_positions) >= MAX_OPEN_POSITIONS:
+        print(f"❌ REJET {symbol}: Limite de {MAX_OPEN_POSITIONS} positions ouvertes atteinte.")
+        return False
+
     quote_asset = exchange.markets[symbol]['quote'] 
     
     # 1. Calcul de la quantité à acheter (base_asset)
@@ -194,7 +200,7 @@ def execute_live_trade(symbol, entry_price, rsi_value=None):
 
         # 4. Notification Telegram
         send_telegram_message(
-            f"✅ **LONG OUVERT - LIVE SPOT**\n"
+            f"✅ **LONG OUVERT - LIVE SPOT** ({len(open_positions)}/{MAX_OPEN_POSITIONS})\n"
             f"=======================\n"
             f"Asset: **{symbol}** (RSI: {rsi_value:.2f})\n"
             f"Entrée: {open_positions[symbol]['entry_price']:.4f}\n"
@@ -238,7 +244,7 @@ def close_live_trade(symbol, current_price):
     else:
         return False 
 
-    # CORRECTION DE L'ERREUR DE CLÔTURE SPOT (Tolérance aux frais)
+    # CORRECTION CRITIQUE : Tolérance aux frais et précision
     FEE_TOLERANCE = 0.9999 # Réduit de 0.01% pour laisser de la marge pour les frais et la précision
     amount_to_sell = trade['amount'] * FEE_TOLERANCE
     amount_to_sell = exchange.amount_to_precision(symbol, amount_to_sell)
@@ -349,6 +355,10 @@ def run_bot():
             
             # 2. RECHERCHE DE NOUVEAUX SIGNAUX
             for symbol in usdc_symbols:
+                # 🔴 VÉRIFICATION : SAUT DE NOUVELLES POSITIONS SI LA LIMITE EST ATTEINTE
+                if len(open_positions) >= MAX_OPEN_POSITIONS:
+                    break 
+                
                 if symbol in open_positions: 
                     continue
                     
