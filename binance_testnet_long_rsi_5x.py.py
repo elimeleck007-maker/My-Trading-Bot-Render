@@ -24,15 +24,15 @@ TELEGRAM_CHAT_ID = '5104739573'
 # --- Paramètres de la Stratégie (LONG) ---
 TIMEFRAME = '1m'          
 RSI_LENGTH = 14          
-RSI_ENTRY_LEVEL = 15     # ACHAT si RSI < 15 (Ultra-survente)
-MAX_SYMBOLS_TO_SCAN = 15 # Scan de 15 paires
-TIME_TO_WAIT_SECONDS = 3  # 3 secondes d'attente
+RSI_ENTRY_LEVEL = 25     
+MAX_SYMBOLS_TO_SCAN = 30 
+TIME_TO_WAIT_SECONDS = 3  
 
 # --- Paramètres de Trading Réel ---
-MAX_OPEN_POSITIONS = 5         # 🟢 NOUVEAU : Limite maximale de positions ouvertes en simultané
-COLLATERAL_AMOUNT_USDC = 2.0   # Montant misé par transaction (2.0 USDC maximum)
-TAKE_PROFIT_PCT = 0.005        # 0.5% (TP)
-STOP_LOSS_PCT = 0.50           # 50% (SL)
+MAX_OPEN_POSITIONS = 5         
+COLLATERAL_AMOUNT_USDC = 2.0   
+TAKE_PROFIT_PCT = 0.005        
+STOP_LOSS_PCT = 0.50           
 EQUITY_REPORT_INTERVAL_SECONDS = 300 
 
 # INITIALISATION DE L'EXCHANGE (BINANCE SPOT SIMPLE)
@@ -68,7 +68,9 @@ def send_telegram_message(message):
     try:
         requests.post(url, data=payload, timeout=5).raise_for_status() 
     except requests.exceptions.RequestException as e:
-        print(f"❌ ÉCHEC TELEGRAM : {e}")
+        # ❌ Suppression du message Telegram en cas d'erreur 429 (Trop de requêtes) pour éviter le spam.
+        if '429 Client Error' not in str(e):
+             print(f"❌ ÉCHEC TELEGRAM : {e}")
 
 def get_usdc_symbols():
     """ Récupère les symboles Spot actifs, filtrés par Min Notional <= 2.0 USDC. """
@@ -160,7 +162,7 @@ def execute_live_trade(symbol, entry_price, rsi_value=None):
     """ Exécute un trade LONG (achat simple) réel sur Binance Spot. """
     global open_positions, exchange, COLLATERAL_AMOUNT_USDC, MAX_OPEN_POSITIONS
     
-    # 🟢 VÉRIFICATION : Ne pas ouvrir si la limite maximale est atteinte
+    # VÉRIFICATION : Ne pas ouvrir si la limite maximale est atteinte
     if len(open_positions) >= MAX_OPEN_POSITIONS:
         print(f"❌ REJET {symbol}: Limite de {MAX_OPEN_POSITIONS} positions ouvertes atteinte.")
         return False
@@ -244,10 +246,25 @@ def close_live_trade(symbol, current_price):
     else:
         return False 
 
-    # CORRECTION CRITIQUE : Tolérance aux frais et précision
-    FEE_TOLERANCE = 0.9999 # Réduit de 0.01% pour laisser de la marge pour les frais et la précision
-    amount_to_sell = trade['amount'] * FEE_TOLERANCE
-    amount_to_sell = exchange.amount_to_precision(symbol, amount_to_sell)
+    # 🔴 CORRECTION CRITIQUE : Interroger le solde réel de l'actif de base avant la vente
+    base_asset = symbol.split('/')[0]
+    try:
+        balance = exchange.fetch_balance(params={'type': 'spot'})
+        # Utiliser la quantité "free" (disponible) réelle sur Binance
+        amount_to_sell = balance['free'].get(base_asset, 0)
+        
+        # S'assurer que le montant disponible n'est pas zéro ou trop petit
+        if amount_to_sell < 0.00000001: 
+             print(f"⚠️ CLÔTURE {symbol}: Solde disponible sur Binance est zéro ou trop faible. Position locale supprimée.")
+             del open_positions[symbol]
+             return False
+             
+        # Appliquer la précision de l'exchange au solde réel
+        amount_to_sell = exchange.amount_to_precision(symbol, amount_to_sell)
+
+    except Exception as e:
+        print(f"❌ ERREUR LORS DE LA VÉRIFICATION DE SOLDE RÉEL pour {symbol}: {e}")
+        return False
 
     try:
         # COMMANDE DE VENTE (LONG EXIT)
@@ -262,7 +279,7 @@ def close_live_trade(symbol, current_price):
         
         # 4. Calcul du P&L (Simplifié)
         real_close_price = float(order.get('average', close_price))
-        pnl_usd = amount_to_sell * (real_close_price - trade['entry_price'])
+        pnl_usd = float(order.get('filled', amount_to_sell)) * (real_close_price - trade['entry_price'])
         
         # 5. Notification Telegram
         send_telegram_message(
@@ -275,8 +292,8 @@ def close_live_trade(symbol, current_price):
         return True
 
     except ccxt.ExchangeError as e:
+        # ❌ Suppression de l'envoi Telegram ici pour éviter le 429 répétitif
         print(f"❌ ERREUR CLÔTURE {symbol} (SPOT): {e}")
-        send_telegram_message(f"🚨 **ÉCHEC DE CLÔTURE SPOT** : {symbol}\n{e}")
         return False
     except Exception as e:
         print(f"❌ Erreur inattendue de clôture: {e}")
@@ -355,8 +372,9 @@ def run_bot():
             
             # 2. RECHERCHE DE NOUVEAUX SIGNAUX
             for symbol in usdc_symbols:
-                # 🔴 VÉRIFICATION : SAUT DE NOUVELLES POSITIONS SI LA LIMITE EST ATTEINTE
+                # VÉRIFICATION : SAUT DE NOUVELLES POSITIONS SI LA LIMITE EST ATTEINTE
                 if len(open_positions) >= MAX_OPEN_POSITIONS:
+                    print(f"⚠️ {timestamp} | Limite de {MAX_OPEN_POSITIONS} positions atteintes. Arrêt du scan pour les nouvelles entrées.")
                     break 
                 
                 if symbol in open_positions: 
