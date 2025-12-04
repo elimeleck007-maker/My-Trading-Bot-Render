@@ -1,39 +1,39 @@
 import ccxt
 import pandas as pd
-import numpy as np 
-# import pandas_ta as ta 
+import numpy as np
 import time
-import requests 
-import random 
+import requests
+import random
 import datetime
-import sys 
-import math 
+import sys
+import math
 
 # =====================================================================
 # ÉTAPE 1 : CONFIGURATION ET PARAMÈTRES (LONG TRADING SPOT)
 # =====================================================================
 
 # --- Clés API (OBLIGATOIRE) ---
-API_KEY = 'i6NcQsRfIn0RAWU7AHIBOEsK9ocFIAbjcnpiWyGb4thC10etiIDbHGWZao6BiVZK' 
+API_KEY = 'i6NcQsRfIn0RAWU7AHIBOEsK9ocFIAbjcnpiWyGb4thC10etiIDbHGWZao6BiVZK'
 SECRET = '9dSivwWbTFYT0ZlBgdhkdFgAJ0bIT4nFfAWrS2GTO467QiGtsDBzBd6zxFD0758L'
 
 # --- Configuration Telegram (OBLIGATOIRE) ---
-TELEGRAM_BOT_TOKEN = '7751726920:AAEMIJqpRw91POu_RDUTN8SOJvMvWSxcuz4' 
-TELEGRAM_CHAT_ID = '5104739573' 
+TELEGRAM_BOT_TOKEN = '7751726920:AAEMIJqpRw91POu_RDUTN8SOJvMvWSxcuz4'
+TELEGRAM_CHAT_ID = '-5104739573' # ⚠️ CORRECTION : Utilisation du tiret pour l'ID de canal/groupe
 
 # --- Paramètres de la Stratégie (LONG) ---
-TIMEFRAME = '1m'          
-RSI_LENGTH = 14          
-RSI_ENTRY_LEVEL = 15     
-MAX_SYMBOLS_TO_SCAN = 30 
-TIME_TO_WAIT_SECONDS = 3  
+TIMEFRAME = '1m'
+RSI_LENGTH = 14                 # LONGUEUR DEMANDÉE: 14
+RSI_ENTRY_LEVEL = 15            # SEUIL DEMANDÉ: 15
+MAX_SYMBOLS_TO_SCAN = 30
+TIME_TO_WAIT_SECONDS = 3
 
 # --- Paramètres de Trading Réel ---
-MAX_OPEN_POSITIONS = 5         
-COLLATERAL_AMOUNT_USDC = 2.0   
-TAKE_PROFIT_PCT = 0.003      
-STOP_LOSS_PCT = 0.50           
-EQUITY_REPORT_INTERVAL_SECONDS = 300 
+MAX_OPEN_POSITIONS = 5
+# ⚠️ CORRECTION : Montant réduit pour couvrir les frais de transaction (0.1%)
+COLLATERAL_AMOUNT_USDC = 1.99   
+TAKE_PROFIT_PCT = 0.003         # TP DEMANDÉ: 0.3% (0.003)
+STOP_LOSS_PCT = 0.50            # SL DEMANDÉ: 50% (0.50)
+EQUITY_REPORT_INTERVAL_SECONDS = 300
 
 # INITIALISATION DE L'EXCHANGE (BINANCE SPOT SIMPLE)
 exchange = ccxt.binance({
@@ -41,15 +41,15 @@ exchange = ccxt.binance({
     'secret': SECRET,
     'enableRateLimit': True,
     'options': {
-        'defaultType': 'spot', 
+        'defaultType': 'spot',
     }
 })
 
-# Variables Globales de Suivi 
-TRANSACTION_COUNT = 0             
-WIN_COUNT = 0                     
-LOSS_COUNT = 0                    
-last_equity_report_time = 0 
+# Variables Globales de Suivi
+TRANSACTION_COUNT = 0
+WIN_COUNT = 0
+LOSS_COUNT = 0
+last_equity_report_time = 0
 open_positions = {}
 
 # =====================================================================
@@ -66,11 +66,15 @@ def send_telegram_message(message):
     payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'Markdown'}
     
     try:
-        requests.post(url, data=payload, timeout=5).raise_for_status() 
+        # ⚠️ CORRECTION : Vérification du statut de la réponse pour détecter le 429
+        response = requests.post(url, data=payload, timeout=5)
+        response.raise_for_status()
     except requests.exceptions.RequestException as e:
-        # ❌ Suppression du message Telegram en cas d'erreur 429 (Trop de requêtes) pour éviter le spam.
-        if '429 Client Error' not in str(e):
-             print(f"❌ ÉCHEC TELEGRAM : {e}")
+        # Gestion simplifiée de l'erreur pour éviter le blocage 429 répétitif
+        if response.status_code == 429:
+            print(f"❌ ÉCHEC TELEGRAM (429): Trop de requêtes. Pause recommandée.")
+        else:
+            print(f"❌ ÉCHEC TELEGRAM : {e}")
 
 def get_usdc_symbols():
     """ Récupère les symboles Spot actifs, filtrés par Min Notional <= 2.0 USDC. """
@@ -93,7 +97,7 @@ def get_usdc_symbols():
 
         if not eligible_symbols:
             print("❌ ALERTE : Aucun symbole Spot n'a été trouvé avec une taille minimale <= 2 USDC.")
-            return [] 
+            return []
             
         print(f"✅ {len(eligible_symbols)} paires Spot éligibles (Min Notional <= 2 USDC) détectées. Scanning {min(len(eligible_symbols), MAX_SYMBOLS_TO_SCAN)} au hasard.")
         
@@ -167,10 +171,28 @@ def execute_live_trade(symbol, entry_price, rsi_value=None):
         print(f"❌ REJET {symbol}: Limite de {MAX_OPEN_POSITIONS} positions ouvertes atteinte.")
         return False
 
-    quote_asset = exchange.markets[symbol]['quote'] 
+    quote_asset = exchange.markets[symbol]['quote']
+    
+    # ⚠️ CORRECTION 1 : Vérification et ajustement du solde réel disponible
+    try:
+        balance = exchange.fetch_balance(params={'type': 'spot'})
+        available_usdc_usdt = balance['free'].get(quote_asset, 0)
+        
+        # Le montant à utiliser est le minimum entre l'objectif (1.99) et le solde réel disponible
+        collateral_to_use = min(COLLATERAL_AMOUNT_USDC, available_usdc_usdt)
+        
+        min_notional = exchange.markets[symbol]['limits']['cost']['min']
+        
+        if collateral_to_use < min_notional:
+             print(f"❌ REJET {symbol}: Solde disponible ({available_usdc_usdt:.4f} {quote_asset}) insuffisant ou inférieur au minimum notionnel ({min_notional:.4f}).")
+             return False
+
+    except Exception as e:
+        print(f"❌ ERREUR VÉRIFICATION SOLDE {symbol}: {e}")
+        return False
     
     # 1. Calcul de la quantité à acheter (base_asset)
-    amount_base_asset = COLLATERAL_AMOUNT_USDC / entry_price
+    amount_base_asset = collateral_to_use / entry_price
     amount_base_asset = exchange.amount_to_precision(symbol, amount_base_asset)
     
     try:
@@ -182,7 +204,7 @@ def execute_live_trade(symbol, entry_price, rsi_value=None):
             amount_base_asset
         )
         
-        real_entry_price = float(order.get('average', entry_price)) 
+        real_entry_price = float(order.get('average', entry_price))
         real_amount_base = float(order.get('filled', amount_base_asset))
 
         # 2. Calcul des prix TP et SL
@@ -216,7 +238,7 @@ def execute_live_trade(symbol, entry_price, rsi_value=None):
     except ccxt.ExchangeError as e:
         error_msg = f"❌ ÉCHEC TRADING {symbol} (LONG SPOT) : {e}"
         print(error_msg)
-        send_telegram_message(f"🚨 **ÉCHEC DU TRADE SPOT** : {symbol}\n{error_msg}")
+        # Supprimé l'envoi Telegram direct ici pour éviter le 429 répétitif en cas de solde nul
         return False
     except Exception as e:
         print(f"❌ ERREUR CRITIQUE DANS execute_live_trade: {e}")
@@ -246,21 +268,20 @@ def close_live_trade(symbol, current_price):
     else:
         return False 
 
-    # 🔴 CORRECTION CRITIQUE : Interroger le solde réel de l'actif de base avant la vente
+    # ⚠️ CORRECTION 2 : Interroger le solde réel disponible sur le compte Binance
     base_asset = symbol.split('/')[0]
     try:
         balance = exchange.fetch_balance(params={'type': 'spot'})
         # Utiliser la quantité "free" (disponible) réelle sur Binance
         amount_to_sell = balance['free'].get(base_asset, 0)
         
-        # S'assurer que le montant disponible n'est pas zéro ou trop petit
-        if amount_to_sell < 0.00000001: 
-             print(f"⚠️ CLÔTURE {symbol}: Solde disponible sur Binance est zéro ou trop faible. Position locale supprimée.")
-             del open_positions[symbol]
-             return False
-             
         # Appliquer la précision de l'exchange au solde réel
         amount_to_sell = exchange.amount_to_precision(symbol, amount_to_sell)
+
+        if float(amount_to_sell) < exchange.markets[symbol]['limits']['amount']['min']: 
+             print(f"⚠️ CLÔTURE {symbol}: Solde disponible ({amount_to_sell}) est sous la taille minimale. Position locale supprimée.")
+             del open_positions[symbol]
+             return False
 
     except Exception as e:
         print(f"❌ ERREUR LORS DE LA VÉRIFICATION DE SOLDE RÉEL pour {symbol}: {e}")
@@ -272,7 +293,7 @@ def close_live_trade(symbol, current_price):
             symbol, 
             'market', 
             'sell', 
-            amount_to_sell
+            float(amount_to_sell) # Utiliser le solde réel disponible et précis
         )
         
         TRANSACTION_COUNT += 1
@@ -284,7 +305,9 @@ def close_live_trade(symbol, current_price):
         # 5. Notification Telegram
         send_telegram_message(
             f"🚨 **CLÔTURE LONG SPOT - {result_type}**\n"
+            f"--- **{symbol}** ---\n"
             f"P&L estimé: **{pnl_usd:.4f} {trade['quote_asset']}**\n"
+            f"Clôture: {real_close_price:.4f}"
         )
         
         print(f"--- 🔔 {symbol} FERMÉ: {result_type} ---")
@@ -292,7 +315,6 @@ def close_live_trade(symbol, current_price):
         return True
 
     except ccxt.ExchangeError as e:
-        # ❌ Suppression de l'envoi Telegram ici pour éviter le 429 répétitif
         print(f"❌ ERREUR CLÔTURE {symbol} (SPOT): {e}")
         return False
     except Exception as e:
@@ -304,7 +326,8 @@ def get_live_equity_and_pnl():
     global exchange
     try:
         balance = exchange.fetch_balance(params={'type': 'spot'})
-        total_usd_balance = balance['total'].get('USDC', 0) + balance['total'].get('USDT', 0)
+        # Ne considérer que le solde libre (non utilisé dans un ordre) pour les USDC/USDT
+        total_usd_balance = balance['free'].get('USDC', 0) + balance['free'].get('USDT', 0)
         return float(total_usd_balance)
 
     except Exception as e:
@@ -339,87 +362,4 @@ def run_bot():
     except Exception as e:
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
         print(f"❌ ERREUR CRITIQUE DE CONNEXION/AUTHENTIFICATION: {e}")
-        print("Veuillez vérifier vos API KEY/SECRET et l'accès Spot. Arrêt du bot.")
-        print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!")
-        
-        sys.exit(1) 
-
-    print(f"🤖 Bot LONG SPOT démarré (RSI < {RSI_ENTRY_LEVEL}, UT: {TIMEFRAME}).")
-    
-    last_equity_report_time = time.time()
-    
-    while True:
-        try:
-            timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
-            
-            usdc_symbols = get_usdc_symbols() 
-            
-            if not usdc_symbols:
-                print(f"\n[{timestamp}] --- AUCUNE PAIRE SPOT ÉLIGIBLE TROUVÉE. Vérification dans 60s. ---")
-                time.sleep(60)
-                continue
-                
-            print(f"\n[{timestamp}] --- Scan du marché démarré ({len(usdc_symbols)} symboles scannés, {len(open_positions)} positions ouvertes locales) ---")
-            
-            
-            # 1. GESTION DES POSITIONS EXISTANTES
-            symbols_to_check = list(open_positions.keys())
-            for symbol in symbols_to_check:
-                data = fetch_ohlcv(symbol, TIMEFRAME, limit=1)
-                if not data.empty:
-                    current_price = data['Close'].iloc[-1]
-                    close_live_trade(symbol, current_price) 
-            
-            # 2. RECHERCHE DE NOUVEAUX SIGNAUX
-            for symbol in usdc_symbols:
-                # VÉRIFICATION : SAUT DE NOUVELLES POSITIONS SI LA LIMITE EST ATTEINTE
-                if len(open_positions) >= MAX_OPEN_POSITIONS:
-                    print(f"⚠️ {timestamp} | Limite de {MAX_OPEN_POSITIONS} positions atteintes. Arrêt du scan pour les nouvelles entrées.")
-                    break 
-                
-                if symbol in open_positions: 
-                    continue
-                    
-                data = fetch_ohlcv(symbol, TIMEFRAME, limit=RSI_LENGTH + 10)
-                
-                if data.empty:
-                    continue
-                
-                # Le signal utilise le calcul RSI manuel
-                signal_detected, entry_price, rsi_value = check_trade_signal(data) 
-                
-                if signal_detected:
-                    execute_live_trade(symbol, entry_price, rsi_value) 
-
-            # GESTION DU RAPPORT D'ÉQUITÉ PÉRIODIQUE
-            if (time.time() - last_equity_report_time) >= EQUITY_REPORT_INTERVAL_SECONDS:
-                send_equity_report()
-                last_equity_report_time = time.time()
-                
-            total_spot_balance = get_live_equity_and_pnl()
-            print(f"💵 **Solde SPOT (USDC/USDT) : {total_spot_balance:.2f}**")
-            
-            print(f"Fin du cycle. Prochain scan dans {TIME_TO_WAIT_SECONDS} seconde(s).")
-            time.sleep(TIME_TO_WAIT_SECONDS) 
-
-        except ccxt.RateLimitExceeded as e:
-            print(f"❌ ALERTE BINANCE: Limite de débit atteinte. Pause prolongée. Détail: {e}")
-            time.sleep(60)
-            
-        except requests.exceptions.RequestException as e:
-            error_message = f"❌ ALERTE CONNEXION : Erreur réseau ou API. Détail: {e}"
-            print(error_message)
-            send_telegram_message(f"⚠️ **ALERTE CONNEXION RÉSEAU** ⚠️\n{error_message}")
-            time.sleep(15) 
-
-        except Exception as e:
-            error_message = f"❌ ERREUR CRITIQUE DANS LE BOT : Redémarrage du cycle. Détail: {e}"
-            print(error_message)
-            send_telegram_message(f"🚨 **ALERTE CRASH POTENTIEL** 🚨\n{error_message}")
-            time.sleep(30) 
-
-# =====================================================================
-# Lancement de l'exécution
-# =====================================================================
-
-run_bot()
+        print("Veuillez vérifier vos API KEY/SECRET et
